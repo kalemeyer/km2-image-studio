@@ -1,3 +1,17 @@
+import json
+import os
+
+CONFIG_PATH = os.path.expanduser("~/.km2studio/config.json")
+
+def load_config():
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r") as f:
+            return json.load(f)
+    return {}
+
+config = load_config()
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
