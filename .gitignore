@@ -1,0 +1,22 @@
+﻿# KM2 Image Studio
+
+Drag & drop product-photo pipeline with optional background removal, soft KM2 watermark, auto color tags/alt-text, CSV manifest, and moves originals to a Finished folder.
+
+## Run locally
+```bash
+pip install -e .
+km2studio
+
+**4) `.gitignore`**
+```powershell
+@'
+__pycache__/
+*.pyc
+*.pyo
+*.DS_Store
+.env
+.venv
+dist/
+build/
+*.spec
+km2_manifest_*.csv

@@ -1,0 +1,21 @@
+[project]
+name = "km2-image-studio"
+version = "0.1.0"
+description = "KM2 Image Studio: product-photo pipeline with GUI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "pillow",
+  "rembg",
+  "tkinterdnd2"
+]
+
+[project.scripts]
+km2studio = "km2_launcher:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["image_studio_app_v3", "km2_launcher"]
