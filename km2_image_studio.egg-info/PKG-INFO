@@ -1,0 +1,26 @@
+Metadata-Version: 2.4
+Name: km2-image-studio
+Version: 0.1.0
+Summary: KM2 Image Studio: product-photo pipeline with GUI
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: pillow
+Requires-Dist: rembg
+Requires-Dist: tkinterdnd2
+
+\# KM2 Image Studio
+
+
+
+Drag \& drop product-photo pipeline with background removal, KM2 watermark, color tags/alt text, and auto Finished folder.
+
+
+
+\## Run locally
+
+pip install -e .
+
+km2studio
+
+
+

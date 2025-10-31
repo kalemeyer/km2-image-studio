@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import datetime
 
 CONFIG_PATH = os.path.expanduser("~/.km2studio/config.json")
 
@@ -10,6 +12,43 @@ def load_config():
     return {}
 
 config = load_config()
+
+def _seo_slug(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    text = re.sub(r"-{2,}", "-", text)
+    return text
+
+def ai_build_filename(product_type: str, colors: list[str], brand_keywords: list[str]) -> str:
+    """
+    Heuristic 'AI-style' SEO filename:
+    - includes brand keywords (deduped)
+    - includes colors (primary first)
+    - includes product type
+    - adds a compact timestamp for uniqueness
+    Example:
+    km2-custom-leather-patch-trucker-hat-black-white-20251030-1254
+    """
+    # Clean pieces
+    kw = [_seo_slug(k) for k in (brand_keywords or []) if k.strip()]
+    kw = list(dict.fromkeys(kw))[:4]  # keep order, de-dupe, cap to 4
+
+    color_part = _seo_slug("-".join([c for c in colors if c])) if colors else ""
+    prod_part = _seo_slug(product_type or "hat")
+
+    parts = [*kw, prod_part]
+    if color_part:
+        parts.append(color_part)
+
+    base = "-".join([p for p in parts if p])
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    return f"{base}-{stamp}" if base else stamp
+
+
+DEFAULT_INPUT_DIR = config.get("default_input_folder", os.path.expanduser("~"))
+DEFAULT_OUTPUT_DIR = config.get("default_output_folder", os.path.expanduser("~"))
+
+print("Loaded KM2 Config:", config)
 
 
 #!/usr/bin/env python3
@@ -105,7 +144,8 @@ class Config:
     rename_template: str = "{product}-{colors}-{timestamp}"
     add_shadow: bool = True
     use_rembg: bool = True
-    export_transparent_png: bool = False
+    export_jpg: bool = True
+    export_png: bool = False
     move_originals: bool = True
     finished_folder: Optional[str] = None
 
@@ -196,13 +236,18 @@ def process_one(path: str, outdir: str, cfg: Config):
         except Exception:
             pass
 
-    base_name = build_filename(cfg.rename_template, cfg.product_type, colors)
+    if config.get("enable_ai_filenames", False):
+        base_name = ai_build_filename(cfg.product_type, colors, config.get("brand_keywords", []))
+    else:
+        base_name = build_filename(cfg.rename_template, cfg.product_type, colors)
+
+
     jpg_name = f"{base_name}.jpg"
     out_jpg = os.path.join(outdir, jpg_name)
     canvas.convert("RGB").save(out_jpg, "JPEG", quality=92, optimize=True)
 
     transparent_png = None
-    if bg_removed and cfg.export_transparent_png:
+    if bg_removed and cfg.export_png:
         transparent_png = f"{base_name}.png"
         out_png = os.path.join(outdir, transparent_png)
         trans_canvas = Image.new("RGBA", (cfg.target_w, cfg.target_h), (0,0,0,0))
@@ -247,12 +292,21 @@ class AppBase:
         self.wm_scale = tk.DoubleVar(value=0.4)
         self.add_shadow = tk.BooleanVar(value=True)
         self.use_rembg = tk.BooleanVar(value=True)
-        self.export_transparent = tk.BooleanVar(value=False)
+        self.export_jpg = tk.BooleanVar(value=True)
+        self.export_png = tk.BooleanVar(value=False)
         self.move_originals = tk.BooleanVar(value=True)
+
         self.finished_folder = tk.StringVar(value="")
         self.output_folder = tk.StringVar(value="")
+        self.input_folder = tk.StringVar(value="")
+
+        # defaults from config
+        self.input_folder.set(DEFAULT_INPUT_DIR)
+        self.output_folder.set(DEFAULT_OUTPUT_DIR)
 
         self.file_list = []
+
+
 
     def _style(self):
         style = ttk.Style(self.root)
@@ -317,10 +371,15 @@ class AppBase:
         wm_row.grid(row=6, column=1, sticky="w", padx=6, pady=4)
 
         opt_row = ttk.Frame(left)
-        ttk.Checkbutton(opt_row, text="Remove background (rembg)", variable=self.use_rembg).pack(side="left")
-        ttk.Checkbutton(opt_row, text="Export transparent PNG", variable=self.export_transparent).pack(side="left", padx=10)
+        # Export & processing options
+        self.export_jpg = tk.BooleanVar(value=True)
+        self.export_png = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(opt_row, text="Export JPG", variable=self.export_jpg).pack(side="left")
+        ttk.Checkbutton(opt_row, text="Export PNG", variable=self.export_png).pack(side="left", padx=10)
+        ttk.Checkbutton(opt_row, text="Remove background", variable=self.use_rembg).pack(side="left", padx=10)
         ttk.Checkbutton(opt_row, text="Add product shadow", variable=self.add_shadow).pack(side="left", padx=10)
-        opt_row.grid(row=7, column=1, sticky="w", padx=6, pady=4)
+
 
         ttk.Label(left, text="Output folder").grid(row=8, column=0, sticky="w", padx=6, pady=4)
         out_row = ttk.Frame(left)
@@ -377,11 +436,11 @@ class AppBase:
         if f: self.logo_path.set(f)
 
     def _pick_output(self):
-        d = filedialog.askdirectory()
+        d = filedialog.askdirectory(initialdir=DEFAULT_OUTPUT_DIR)
         if d: self.output_folder.set(d)
 
     def _pick_finished(self):
-        d = filedialog.askdirectory()
+        d = filedialog.askdirectory(initialdir=DEFAULT_INPUT_DIR)
         if d: self.finished_folder.set(d)
 
     def _help(self):
@@ -453,8 +512,11 @@ class AppBase:
 
         fin_dir = self.finished_folder.get().strip()
         if not fin_dir:
-            fin_dir = os.path.join(outdir, "Finished_Originals")
-        os.makedirs(fin_dir, exist_ok=True)
+           # Default archive next to the source photos
+           base_input = self.input_folder.get().strip() or (os.path.dirname(self.file_list[0]) if self.file_list       else outdir)
+           fin_dir = os.path.join(base_input, "Finished_Originals")
+           os.makedirs(fin_dir, exist_ok=True)
+
 
         try:
             cfg = Config(
@@ -469,7 +531,9 @@ class AppBase:
                 rename_template = self.rename_template.get().strip() or "{product}-{colors}-{timestamp}",
                 add_shadow = bool(self.add_shadow.get()),
                 use_rembg = bool(self.use_rembg.get()),
-                export_transparent_png = bool(self.export_transparent.get()),
+                export_jpg = bool(self.export_jpg.get()),
+		export_png = bool(self.export_png.get()),
+
                 move_originals = True,
                 finished_folder = fin_dir
             )
@@ -480,7 +544,7 @@ class AppBase:
         manifest_path = os.path.join(outdir, f"km2_manifest_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}.csv")
         with open(manifest_path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
-            extra = ["transparent_png"] if (cfg.use_rembg and cfg.export_transparent_png) else []
+            extra = ["transparent_png"] if (cfg.use_rembg and cfg.export_png) else []
             writer.writerow(["original_name","new_filename","alt_text","tags"] + extra)
 
             total = len(self.file_list)
@@ -493,7 +557,7 @@ class AppBase:
                 try:
                     info = process_one(fpath, outdir, cfg)
                     row = [info["original"], info["jpg"], info["alt_text"], "|".join(info["tags"])]
-                    if cfg.use_rembg and cfg.export_transparent_png:
+                    if cfg.use_rembg and cfg.export_png:
                         row.append(info["png"] or "")
                     writer.writerow(row)
                     ok += 1
@@ -512,6 +576,7 @@ class AppBase:
                     self._log(f"[{i}/{total}] ❌ {os.path.basename(fpath)}: {e}")
 
         self._log(f"Done. {ok}/{total} succeeded. Manifest: {manifest_path}")
+        self._clear_queue()
         messagebox.showinfo("Complete", f"All set.\n{ok}/{total} succeeded.\nManifest:\n{manifest_path}")
 
 def main():
