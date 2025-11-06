@@ -6,6 +6,8 @@ import sys
 from importlib import import_module
 from typing import Iterable
 
+from dependency_utils import rembg_requirement
+
 REQUIRED_IMPORTS = {
     "PIL": "pillow",
     "rembg": "rembg",
@@ -19,7 +21,14 @@ def _missing_packages() -> list[str]:
         try:
             import_module(module_name)
         except ModuleNotFoundError:
-            missing.append(package_name)
+            if package_name == "rembg":
+                requirement, error = rembg_requirement()
+                if requirement is None:
+                    print(f"⚠️ {error}")
+                else:
+                    missing.append(requirement)
+            else:
+                missing.append(package_name)
     return missing
 
 

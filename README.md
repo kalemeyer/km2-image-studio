@@ -27,6 +27,7 @@ Drag & drop product-photo pipeline with background removal, KM2 watermark, color
 
 If you already have the folder on your computer and just want the latest changes from GitHub, pick whichever option feels easier:
 
+* **Inside the app:** click **Update App** in the Settings → Actions row. The button downloads the newest ZIP from GitHub and replaces the core project files for you. Restart the app afterwards so Python reloads the updated modules.
 * **Fastest for beginners:** delete your old `km2-image-studio` folder and repeat step 2 above to download the ZIP again. Once unzipped, use the new folder the same way as before.
 * **If you use Git:** open a terminal in the project folder and run `git pull`. That command grabs only the files that changed.
 
@@ -62,6 +63,8 @@ The launcher automatically falls back to `km2_launcher.py` when the module canno
 - If the window does not open and the console shows `Could not install dependencies automatically`, run the command it prints (`python -m pip install -r requirements.txt`) and try `start_km2studio.py` again.
 - On Windows, you might need to right-click the file, choose **Open with**, and pick **Python** the first time.
 - You can always fall back to the manual commands in the section above; they launch the exact same interface.
+- If background removal says `rembg` is missing, click **Install Background Removal** in the app. The installer now picks a
+  compatible `rembg` release for your Python version and will explain how to upgrade Python if no wheel is available.
 
 ### Upload your copy to GitHub
 
