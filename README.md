@@ -23,6 +23,15 @@ Drag & drop product-photo pipeline with background removal, KM2 watermark, color
 
 4. **Next time you want to open it**, just double-click the same file again. No extra setup is needed unless you download a fresh copy of the project.
 
+### Update to the newest version later on
+
+If you already have the folder on your computer and just want the latest changes from GitHub, pick whichever option feels easier:
+
+* **Fastest for beginners:** delete your old `km2-image-studio` folder and repeat step 2 above to download the ZIP again. Once unzipped, use the new folder the same way as before.
+* **If you use Git:** open a terminal in the project folder and run `git pull`. That command grabs only the files that changed.
+
+After you refresh the files (either method), double-click `start_km2studio.py` again. Python will reuse the packages it already installed unless something new was added, so the update process stays quick.
+
 ### Prefer the manual commands?
 
 If you like seeing each step yourself, you can still use the original process:
