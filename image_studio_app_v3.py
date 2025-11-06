@@ -7,6 +7,7 @@ import threading
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 CONFIG_PATH = os.path.expanduser("~/.km2studio/config.json")
@@ -56,6 +57,10 @@ DEFAULT_OUTPUT_DIR = config.get("default_output_folder", os.path.expanduser("~")
 
 APP_ROOT = Path(__file__).resolve().parent
 REMOTE_ARCHIVE_URL = "https://github.com/kalemeyer/km2-image-studio/archive/refs/heads/main.zip"
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/kalemeyer/km2-image-studio/main/VERSION"
+REMOTE_PATCH_NOTES_TEMPLATE = "https://raw.githubusercontent.com/kalemeyer/km2-image-studio/main/patch_notes/v{version}.md"
+VERSION_FILE = APP_ROOT / "VERSION"
+PATCH_NOTES_DIR = APP_ROOT / "patch_notes"
 
 print("Loaded KM2 Config:", config)
 
@@ -294,10 +299,21 @@ class AppBase:
         self.root.geometry("880x700")
         self.root.minsize(820, 640)
         self._updating = False
+        self._checking_updates = False
+        self.local_version = self._load_local_version()
+        self._pending_patch_notes: Optional[Tuple[str, str]] = None
 
         self._init_vars()
         self._style()
+        self._build_menus()
         self._build_layout()
+
+    def _load_local_version(self) -> str:
+        try:
+            value = VERSION_FILE.read_text(encoding="utf-8").strip()
+            return value or "0.0.0"
+        except Exception:
+            return "0.0.0"
 
     def _init_vars(self):
         self.product_type = tk.StringVar(value="custom hat")
@@ -333,6 +349,34 @@ class AppBase:
             style.theme_use("clam")
         except Exception:
             pass
+
+    def _build_menus(self):
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=False)
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(label="View Help", command=self._help)
+        help_menu.add_separator()
+        help_menu.add_command(label="Check for Updates…", command=self._check_for_updates)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+
+    @staticmethod
+    def _parse_version(value: str) -> tuple[int, ...]:
+        pieces = []
+        for part in (value or "").strip().split("."):
+            try:
+                pieces.append(int(part))
+            except ValueError:
+                pieces.append(0)
+        return tuple(pieces) or (0,)
+
+    def _is_remote_newer(self, remote_version: str) -> bool:
+        return self._parse_version(remote_version) > self._parse_version(self.local_version)
 
     def _build_layout(self):
         container = ttk.Frame(self.root, padding=10)
@@ -488,6 +532,101 @@ class AppBase:
         d = filedialog.askdirectory(initialdir=DEFAULT_INPUT_DIR)
         if d: self.finished_folder.set(d)
 
+    def _check_for_updates(self):
+        if self._updating:
+            messagebox.showinfo("Update in progress", "Please wait for the current update to finish.")
+            return
+        if self._checking_updates:
+            messagebox.showinfo("Update", "Already checking for updates — please wait.")
+            return
+
+        self._checking_updates = True
+        self._log("Checking for updates…")
+        threading.Thread(target=self._perform_update_check, daemon=True).start()
+
+    def _perform_update_check(self):
+        try:
+            remote_version = self._fetch_remote_version()
+            if not remote_version:
+                raise RuntimeError("Could not determine the latest version.")
+
+            if self._is_remote_newer(remote_version):
+                patch_notes = self._fetch_patch_notes(remote_version)
+                notes_path = self._store_patch_notes(remote_version, patch_notes)
+                self._pending_patch_notes = (remote_version, patch_notes)
+                self._log(f"Update available → {remote_version} (current {self.local_version}).")
+
+                def prompt():
+                    summary_lines = []
+                    if patch_notes:
+                        for line in patch_notes.splitlines():
+                            if line.strip():
+                                summary_lines.append(line.strip())
+                            if len(summary_lines) >= 4:
+                                break
+                    summary = "\n".join(summary_lines)
+                    message = (
+                        f"Version {remote_version} is available. You are on {self.local_version}.\n\n"
+                        + (f"Patch notes preview:\n{summary}\n\n" if summary else "")
+                        + "Would you like to download and install it now?"
+                    )
+                    if notes_path:
+                        message += f"\n\nFull notes saved to: {notes_path}"
+
+                    if messagebox.askyesno("Update available", message):
+                        self._start_update(confirm=False)
+                self.root.after(0, prompt)
+            else:
+                self._log("Already on the latest version.")
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Up to date",
+                        f"You are already on the latest version ({self.local_version}).",
+                    ),
+                )
+        except Exception as exc:
+            self._log(f"Update check failed: {exc}")
+            self.root.after(0, lambda: messagebox.showerror("Update check failed", str(exc)))
+        finally:
+            self._checking_updates = False
+
+    def _fetch_remote_version(self) -> str:
+        try:
+            with urllib_request.urlopen(REMOTE_VERSION_URL, timeout=10) as response:
+                return response.read().decode("utf-8").strip()
+        except urllib_error.URLError as exc:
+            raise RuntimeError(f"Network error: {exc}") from exc
+
+    def _fetch_patch_notes(self, version: str) -> str:
+        url = REMOTE_PATCH_NOTES_TEMPLATE.format(version=version)
+        try:
+            with urllib_request.urlopen(url, timeout=10) as response:
+                return response.read().decode("utf-8")
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                return ""
+            raise RuntimeError(f"Could not fetch patch notes: {exc}") from exc
+        except urllib_error.URLError as exc:
+            self._log(f"Patch notes download failed: {exc}")
+            return ""
+
+    def _store_patch_notes(self, version: str, contents: str):
+        if not contents:
+            return None
+        try:
+            PATCH_NOTES_DIR.mkdir(exist_ok=True)
+            path = PATCH_NOTES_DIR / f"v{version}.md"
+            path.write_text(contents, encoding="utf-8")
+            return path
+        except Exception as exc:
+            self._log(f"Could not save patch notes: {exc}")
+            return None
+
+    def _get_patch_notes_path(self, version: str):
+        path = PATCH_NOTES_DIR / f"v{version}.md"
+        return path if path.exists() else None
+
     def _help(self):
         msg = ("Workflow:\n"
                "1) Set product type, size, and options on the left.\n"
@@ -504,20 +643,27 @@ class AppBase:
         files = filedialog.askopenfilenames(filetypes=[("Images","*.png;*.jpg;*.jpeg;*.webp")])
         self._add_paths(files)
 
-    def _update_app(self):
+    def _start_update(self, confirm: bool = True):
         if self._updating:
             messagebox.showinfo("Update", "An update is already in progress — please wait.")
             return
-
-        if not messagebox.askyesno(
-            "Update KM2 Image Studio",
-            "This will download the newest files from GitHub. Continue?",
-        ):
+        if self._checking_updates:
+            messagebox.showinfo("Update", "Currently checking for updates — please wait.")
             return
+
+        if confirm:
+            if not messagebox.askyesno(
+                "Update KM2 Image Studio",
+                "This will download the newest files from GitHub. Continue?",
+            ):
+                return
 
         self._updating = True
         self._log("Starting update…")
         threading.Thread(target=self._run_update, daemon=True).start()
+
+    def _update_app(self):
+        self._start_update(confirm=True)
 
     def _run_update(self):
         try:
@@ -539,20 +685,33 @@ class AppBase:
                 self._log("No git metadata found — downloading ZIP archive…")
                 self._apply_archive_update()
 
+            self.local_version = self._load_local_version()
+            note_path = None
+            if self._pending_patch_notes:
+                version, contents = self._pending_patch_notes
+                if contents:
+                    note_path = self._store_patch_notes(version, contents)
+            if not note_path and self.local_version:
+                note_path = self._get_patch_notes_path(self.local_version)
+
             self._log("Update complete. Restart the app to load the newest version.")
-            self.root.after(
-                0,
-                lambda: messagebox.showinfo(
-                    "Update complete",
-                    "Restart KM2 Image Studio to load the newest version.",
-                ),
-            )
+            if note_path:
+                self._log(f"Patch notes saved to {note_path}")
+
+            def _notify():
+                message = "Restart KM2 Image Studio to load the newest version."
+                if note_path:
+                    message += f"\n\nPatch notes saved to:\n{note_path}"
+                messagebox.showinfo("Update complete", message)
+
+            self.root.after(0, _notify)
         except Exception as exc:
             message = str(exc)
             self._log(f"Update failed: {message}")
             self.root.after(0, lambda: messagebox.showerror("Update failed", message))
         finally:
             self._updating = False
+            self._pending_patch_notes = None
 
     def _apply_archive_update(self):
         with tempfile.TemporaryDirectory() as tmp:

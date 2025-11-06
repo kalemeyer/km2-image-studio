@@ -15,20 +15,28 @@ Drag & drop product-photo pipeline with background removal, KM2 watermark, color
 
 3. **Double-click `KM2_Image_Studio.pyw`**
    * This file hides the console window on Windows/macOS and simply launches the app.
-   * The first run may take a moment: it calls `start_km2studio.py` under the hood, which installs Pillow, rembg, and tkinterdnd2 automatically if they are missing.
+   * The first run may take a moment: it calls `start_km2studio.py` under the hood, which installs Pillow and tkinterdnd2 automatically if they are missing. Background removal (`rembg`) is optional—you will get a reminder explaining how to add it later if you want the transparent PNG feature.
    * On Linux, some desktop environments do not run `.pyw` files directly. In that case, right-click → **Open With Python** or run `python start_km2studio.py` from a terminal in the folder.
    * Prefer the original launcher? You can still double-click `start_km2studio.py` (or run `python start_km2studio.py`) and everything works exactly the same.
 
 4. **Next time you want to open it**, just double-click `KM2_Image_Studio.pyw` again. No extra setup is needed unless you download a fresh copy of the project.
 
+### Get around with the menu bar
+
+The top of the window now includes familiar menus:
+
+- **File → Exit** closes the application.
+- **Help → View Help** shows the workflow tips that used to live on the Help button.
+- **Help → Check for Updates…** looks online to see whether a newer version is available and walks you through installing it.
+
 ### Update without leaving the app
 
-Click the **Update App** button in the lower-left corner of the window. KM2 Image Studio will:
+Use **Help → Check for Updates…** (or click the **Update App** button in the lower-left corner) and KM2 Image Studio will:
 
 1. Try `git pull` if it detects that your copy came from `git clone`.
 2. Otherwise download the latest ZIP from GitHub, replace the files in place, and prompt you to restart the app.
 
-After the update finishes, close and reopen the program to load the new code.
+After the update finishes, close and reopen the program to load the new code. Patch notes for each release are saved locally in the `patch_notes/` folder (for example `patch_notes/v1.3.0.md`), and the latest summary is always mirrored in `PATCH_NOTES.md`.
 
 ### Update to the newest version later on (manual options)
 
