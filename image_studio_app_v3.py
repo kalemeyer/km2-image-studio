@@ -1,7 +1,18 @@
+from __future__ import annotations
+
+import csv
+import datetime
 import json
+import math
 import os
 import re
-import datetime
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
 
 CONFIG_PATH = os.path.expanduser("~/.km2studio/config.json")
 
@@ -12,6 +23,69 @@ def load_config():
     return {}
 
 config = load_config()
+
+APP_ROOT = Path(__file__).resolve().parent
+
+DEFAULT_UPDATE_URL = config.get(
+    "update_zip_url",
+    "https://codeload.github.com/km2creative/km2-image-studio/zip/refs/heads/main",
+)
+
+UPDATE_FILES = [
+    "README.md",
+    "image_studio_app_v3.py",
+    "km2_launcher.py",
+    "requirements.txt",
+    "start_km2studio.py",
+    "pyproject.toml",
+]
+
+
+def download_and_apply_update(update_url: str = DEFAULT_UPDATE_URL) -> list[str]:
+    """Download the latest project archive and copy whitelisted files into place."""
+
+    if not update_url:
+        raise ValueError("No update URL configured.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        zip_path = tmp_path / "km2studio-latest.zip"
+
+        with urllib.request.urlopen(update_url) as response:
+            status = getattr(response, "status", None)
+            if status is None:
+                status = response.getcode()
+            if status and status >= 400:
+                raise RuntimeError(f"Download failed with HTTP status {status}.")
+            zip_path.write_bytes(response.read())
+
+        with zipfile.ZipFile(zip_path) as archive:
+            archive.extractall(tmp_path)
+
+        roots = [p for p in tmp_path.iterdir() if p.is_dir()]
+        if not roots:
+            raise RuntimeError("Downloaded archive was empty.")
+
+        repo_root = roots[0]
+        for candidate in roots:
+            if candidate.name.startswith("km2-image-studio"):
+                repo_root = candidate
+                break
+
+        updated: list[str] = []
+        for rel_path in UPDATE_FILES:
+            src = repo_root / rel_path
+            if not src.exists():
+                continue
+            dest = APP_ROOT / rel_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            updated.append(rel_path)
+
+        if not updated:
+            raise RuntimeError("Archive did not contain any known project files.")
+
+        return updated
 
 def _seo_slug(text: str) -> str:
     text = text.lower()
@@ -66,7 +140,6 @@ Install (recommended):
     pip install pillow rembg tkinterdnd2
 """
 
-import os, sys, csv, math, datetime, shutil
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 
@@ -374,7 +447,7 @@ class AppBase:
 
         left = ttk.LabelFrame(container, text="Settings", style="Section.TLabelframe")
         left.grid(row=2, column=0, sticky="nsew", padx=(0,8))
-        for i in range(14):
+        for i in range(15):
             left.rowconfigure(i, weight=0)
         left.columnconfigure(1, weight=1)
 
@@ -429,29 +502,38 @@ class AppBase:
         ttk.Checkbutton(opt_row, text="Add product shadow", variable=self.add_shadow).pack(side="left", padx=10)
         opt_row.grid(row=8, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
+        if not _HAVE_REMBG:
+            ttk.Label(
+                left,
+                text="rembg is missing — click \"Install Background Removal\" below to enable cutouts.",
+                style="Subtext.TLabel",
+            ).grid(row=9, column=0, columnspan=2, sticky="w", padx=6, pady=(0,8))
 
-        ttk.Label(left, text="Output folder").grid(row=9, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Output folder").grid(row=10, column=0, sticky="w", padx=6, pady=4)
         out_row = ttk.Frame(left)
         self.output_entry = ttk.Entry(out_row, textvariable=self.output_folder)
         self.output_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(out_row, text="Browse", command=self._pick_output).pack(side="left", padx=4)
-        out_row.grid(row=9, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", style="Subtext.TLabel").grid(row=10, column=1, sticky="w", padx=6, pady=(0,8))
+        out_row.grid(row=10, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", style="Subtext.TLabel").grid(row=11, column=1, sticky="w", padx=6, pady=(0,8))
 
-        ttk.Label(left, text="Finished (originals) folder").grid(row=11, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Finished (originals) folder").grid(row=12, column=0, sticky="w", padx=6, pady=4)
         fin_row = ttk.Frame(left)
         self.finished_entry = ttk.Entry(fin_row, textvariable=self.finished_folder)
         self.finished_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(fin_row, text="Browse", command=self._pick_finished).pack(side="left", padx=4)
-        fin_row.grid(row=11, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", style="Subtext.TLabel").grid(row=12, column=1, sticky="w", padx=6, pady=(0,8))
+        fin_row.grid(row=12, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", style="Subtext.TLabel").grid(row=13, column=1, sticky="w", padx=6, pady=(0,8))
 
         act = ttk.Frame(left)
         ttk.Button(act, text="Process Queue", command=self._process_queue).pack(side="left", padx=4)
         ttk.Button(act, text="Clear Queue", command=self._clear_queue).pack(side="left", padx=4)
         ttk.Button(act, text="Add Files…", command=self._add_files).pack(side="left", padx=4)
         ttk.Button(act, text="Help", command=self._help).pack(side="left", padx=4)
-        act.grid(row=13, column=0, columnspan=2, sticky="w", padx=6, pady=8)
+        ttk.Button(act, text="Update App", command=self._update_app).pack(side="left", padx=4)
+        if not _HAVE_REMBG:
+            ttk.Button(act, text="Install Background Removal", command=self._install_rembg).pack(side="left", padx=4)
+        act.grid(row=14, column=0, columnspan=2, sticky="w", padx=6, pady=8)
 
         right = ttk.LabelFrame(container, text="Drop Zone & Progress", style="Section.TLabelframe")
         right.grid(row=2, column=1, sticky="nsew")
@@ -489,6 +571,66 @@ class AppBase:
         self.header_row = header_row
 
         self._apply_theme()
+
+    def _update_app(self):
+        update_url = DEFAULT_UPDATE_URL
+        if not update_url:
+            messagebox.showerror("Update unavailable", "No update source is configured in config.json.")
+            return
+
+        if not messagebox.askyesno(
+            "Update KM2 Image Studio",
+            "Download the latest version from GitHub and overwrite the core app files?",
+        ):
+            return
+
+        self._log("Downloading latest update…")
+        self.root.update_idletasks()
+
+        try:
+            updated = download_and_apply_update(update_url)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"Update failed: {exc}")
+            messagebox.showerror("Update failed", f"Could not update the app: {exc}")
+            return
+
+        updated_list = ", ".join(updated)
+        self._log(f"Update complete. Updated files: {updated_list}")
+        messagebox.showinfo(
+            "Update complete",
+            "Latest files downloaded. Please restart the app to make sure everything reloads.",
+        )
+
+    def _install_rembg(self):
+        if _HAVE_REMBG:
+            messagebox.showinfo("Already installed", "rembg is already available on this system.")
+            return
+
+        if not messagebox.askyesno(
+            "Install rembg",
+            "Install the rembg package now so background removal can run?",
+        ):
+            return
+
+        self._log("Installing rembg…")
+        self.root.update_idletasks()
+
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "rembg"])
+            from rembg import remove as _new_remove  # type: ignore
+        except subprocess.CalledProcessError as exc:
+            self._log(f"rembg installation failed: {exc}")
+            messagebox.showerror("Installation failed", f"pip could not install rembg: {exc}")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"rembg installation failed: {exc}")
+            messagebox.showerror("Installation failed", f"Could not import rembg after installation: {exc}")
+            return
+
+        globals()["_HAVE_REMBG"] = True
+        globals()["rembg_remove"] = _new_remove
+        self._log("rembg installed successfully.")
+        messagebox.showinfo("rembg installed", "Background removal is ready to use.")
 
     def _toggle_theme(self):
         self.is_dark_mode.set(not self.is_dark_mode.get())
