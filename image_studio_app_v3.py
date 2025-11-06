@@ -304,6 +304,8 @@ class AppBase:
         self.export_jpg = tk.BooleanVar(value=True)
         self.export_png = tk.BooleanVar(value=False)
         self.move_originals = tk.BooleanVar(value=True)
+        self.is_dark_mode = tk.BooleanVar(value=False)
+        self.theme_button_text = tk.StringVar(value="🌙 Dark mode")
 
         self.finished_folder = tk.StringVar(value="")
         self.output_folder = tk.StringVar(value="")
@@ -324,8 +326,17 @@ class AppBase:
         except Exception:
             pass
 
+        style.configure("App.TFrame")
+        style.configure("Header.TLabel", font=("Segoe UI", 16, "bold"))
+        style.configure("Note.TLabel", wraplength=360, justify="left")
+        style.configure("Section.TLabelframe", padding=(12, 10))
+        style.configure("Section.TLabelframe.Label", font=("Segoe UI", 11, "bold"))
+        style.configure("Drop.TLabel", anchor="center", padding=(16, 24))
+        style.configure("Subtext.TLabel", wraplength=360, justify="left")
+        style.configure("Accent.TButton", padding=(8, 4))
+
     def _build_layout(self):
-        container = ttk.Frame(self.root, padding=10)
+        container = ttk.Frame(self.root, padding=12, style="App.TFrame")
         container.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -334,15 +345,34 @@ class AppBase:
         container.columnconfigure(1, weight=1)
         container.rowconfigure(2, weight=1)
 
-        header = ttk.Label(container, text="KM2 Image Studio", font=("Segoe UI", 16, "bold"))
-        header.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,6))
+        header_row = ttk.Frame(container, style="App.TFrame")
+        header_row.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header_row.columnconfigure(0, weight=1)
+        header_row.columnconfigure(1, weight=0)
 
-        note = ttk.Label(container, foreground="#444",
-                         text=("Tip: Drag & drop images into the box on the right.\n"
-                               "I’ll standardize them, auto-name with colors, and export JPGs (and PNGs if you want)."))
-        note.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0,10))
+        self.header_label = ttk.Label(header_row, text="KM2 Image Studio", style="Header.TLabel")
+        self.header_label.grid(row=0, column=0, sticky="w", pady=(0, 6))
 
-        left = ttk.LabelFrame(container, text="Settings")
+        self.theme_toggle = ttk.Button(
+            header_row,
+            textvariable=self.theme_button_text,
+            command=self._toggle_theme,
+            width=16,
+        )
+        self.theme_toggle.grid(row=0, column=1, sticky="e", pady=(0, 6))
+        self.theme_toggle.configure(style="Accent.TButton")
+
+        self.note = ttk.Label(
+            container,
+            text=(
+                "Tip: Drag & drop images into the box on the right.\n"
+                "I’ll standardize them, auto-name with colors, and export JPGs (and PNGs if you want)."
+            ),
+            style="Note.TLabel",
+        )
+        self.note.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        left = ttk.LabelFrame(container, text="Settings", style="Section.TLabelframe")
         left.grid(row=2, column=0, sticky="nsew", padx=(0,8))
         for i in range(14):
             left.rowconfigure(i, weight=0)
@@ -353,7 +383,7 @@ class AppBase:
 
         ttk.Label(left, text="Rename template").grid(row=1, column=0, sticky="w", padx=6, pady=4)
         ttk.Entry(left, textvariable=self.rename_template).grid(row=1, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="Use {product}, {colors}, {timestamp}", foreground="#666").grid(row=2, column=1, sticky="w", padx=6, pady=(0,8))
+        ttk.Label(left, text="Use {product}, {colors}, {timestamp}", style="Subtext.TLabel").grid(row=2, column=1, sticky="w", padx=6, pady=(0,8))
 
         ttk.Label(left, text="Export size (px)").grid(row=3, column=0, sticky="w", padx=6, pady=4)
         size_frame = ttk.Frame(left)
@@ -406,7 +436,7 @@ class AppBase:
         self.output_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(out_row, text="Browse", command=self._pick_output).pack(side="left", padx=4)
         out_row.grid(row=9, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", foreground="#666").grid(row=10, column=1, sticky="w", padx=6, pady=(0,8))
+        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", style="Subtext.TLabel").grid(row=10, column=1, sticky="w", padx=6, pady=(0,8))
 
         ttk.Label(left, text="Finished (originals) folder").grid(row=11, column=0, sticky="w", padx=6, pady=4)
         fin_row = ttk.Frame(left)
@@ -414,7 +444,7 @@ class AppBase:
         self.finished_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(fin_row, text="Browse", command=self._pick_finished).pack(side="left", padx=4)
         fin_row.grid(row=11, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", foreground="#666").grid(row=12, column=1, sticky="w", padx=6, pady=(0,8))
+        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", style="Subtext.TLabel").grid(row=12, column=1, sticky="w", padx=6, pady=(0,8))
 
         act = ttk.Frame(left)
         ttk.Button(act, text="Process Queue", command=self._process_queue).pack(side="left", padx=4)
@@ -423,17 +453,25 @@ class AppBase:
         ttk.Button(act, text="Help", command=self._help).pack(side="left", padx=4)
         act.grid(row=13, column=0, columnspan=2, sticky="w", padx=6, pady=8)
 
-        right = ttk.LabelFrame(container, text="Drop Zone & Progress")
+        right = ttk.LabelFrame(container, text="Drop Zone & Progress", style="Section.TLabelframe")
         right.grid(row=2, column=1, sticky="nsew")
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        self.drop_lbl = ttk.Label(right, text=("Drop images here\n(PNG/JPG/WEBP)\n\n"
-                                               + ("✅ Drag & drop enabled"
-                                                  if _HAVE_DND else
-                                                  "⚠️ Install tkinterdnd2 to enable drag & drop:\n   pip install tkinterdnd2")),
-                                  relief="ridge", anchor="center")
-        self.drop_lbl.grid(row=0, column=0, sticky="ew", padx=8, pady=8, ipadx=12, ipady=24)
+        self.drop_lbl = ttk.Label(
+            right,
+            text=(
+                "Drop images here\n(PNG/JPG/WEBP)\n\n"
+                + (
+                    "✅ Drag & drop enabled"
+                    if _HAVE_DND
+                    else "⚠️ Install tkinterdnd2 to enable drag & drop:\n   pip install tkinterdnd2"
+                )
+            ),
+            relief="ridge",
+            style="Drop.TLabel",
+        )
+        self.drop_lbl.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
 
         if _HAVE_DND:
             self.drop_lbl.drop_target_register(DND_FILES)
@@ -444,6 +482,122 @@ class AppBase:
 
         self.log = tk.Text(right, height=10)
         self.log.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0,8))
+
+        self.container = container
+        self.left_panel = left
+        self.right_panel = right
+        self.header_row = header_row
+
+        self._apply_theme()
+
+    def _toggle_theme(self):
+        self.is_dark_mode.set(not self.is_dark_mode.get())
+        self._apply_theme()
+
+    def _apply_theme(self):
+        style = ttk.Style(self.root)
+        is_dark = self.is_dark_mode.get()
+
+        palette = {
+            "light": {
+                "bg": "#f5f7fb",
+                "card": "#ffffff",
+                "text": "#1f2933",
+                "subtext": "#4b5563",
+                "border": "#cbd5e1",
+                "accent": "#2563eb",
+                "accent_hover": "#1d4ed8",
+                "field_bg": "#ffffff",
+                "field_fg": "#111827",
+            },
+            "dark": {
+                "bg": "#111827",
+                "card": "#1f2937",
+                "text": "#e5e7ef",
+                "subtext": "#9ca3af",
+                "border": "#334155",
+                "accent": "#60a5fa",
+                "accent_hover": "#3b82f6",
+                "field_bg": "#0f172a",
+                "field_fg": "#e2e8f0",
+            },
+        }
+
+        colors = palette["dark" if is_dark else "light"]
+
+        # Update root background and window styling
+        self.root.configure(bg=colors["bg"])
+
+        # Update ttk styles
+        style.configure("App.TFrame", background=colors["bg"])
+        style.configure("Header.TLabel", background=colors["bg"], foreground=colors["text"])
+        style.configure("Note.TLabel", background=colors["bg"], foreground=colors["subtext"])
+        style.configure(
+            "Section.TLabelframe",
+            background=colors["card"],
+            foreground=colors["text"],
+            bordercolor=colors["border"],
+            relief="solid",
+        )
+        style.configure(
+            "Section.TLabelframe.Label",
+            background=colors["bg"],
+            foreground=colors["text"],
+        )
+        style.configure(
+            "Drop.TLabel",
+            background=colors["card"],
+            foreground=colors["text"],
+            borderwidth=1,
+        )
+        style.configure("Subtext.TLabel", background=colors["card"], foreground=colors["subtext"])
+        style.configure("TFrame", background=colors["card"])
+        style.configure("TLabel", background=colors["card"], foreground=colors["text"])
+        style.configure("TCheckbutton", background=colors["card"], foreground=colors["text"])
+        style.configure("TButton", background=colors["card"], foreground=colors["text"])
+        style.configure("Accent.TButton", background=colors["accent"], foreground=colors["card"])
+        style.map(
+            "Accent.TButton",
+            background=[("active", colors["accent_hover"]), ("pressed", colors["accent_hover"])],
+            foreground=[("active", colors["card"]), ("pressed", colors["card"])],
+        )
+        style.configure("TEntry", fieldbackground=colors["field_bg"], foreground=colors["field_fg"], insertcolor=colors["field_fg"])
+        style.configure("TSpinbox", fieldbackground=colors["field_bg"], foreground=colors["field_fg"], arrowcolor=colors["text"])
+
+        # Update Tk widgets backgrounds
+        for frame in (self.container, self.header_row):
+            frame.configure(style="App.TFrame")
+
+        for panel in (self.left_panel, self.right_panel):
+            panel.configure(style="Section.TLabelframe")
+
+        self.drop_lbl.configure(style="Drop.TLabel")
+
+        self.listbox.configure(
+            background=colors["field_bg"],
+            foreground=colors["field_fg"],
+            selectbackground=colors["accent"],
+            selectforeground=colors["card"],
+            highlightbackground=colors["border"],
+            highlightcolor=colors["border"],
+            relief="flat",
+            borderwidth=1,
+        )
+
+        self.log.configure(
+            background=colors["field_bg"],
+            foreground=colors["field_fg"],
+            insertbackground=colors["field_fg"],
+            highlightbackground=colors["border"],
+            highlightcolor=colors["border"],
+            relief="flat",
+            borderwidth=1,
+        )
+
+        if is_dark:
+            self.theme_button_text.set("☀️ Light mode")
+        else:
+            self.theme_button_text.set("🌙 Dark mode")
 
     def _log(self, s: str):
         self.log.insert("end", s + "\n")
