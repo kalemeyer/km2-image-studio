@@ -2,6 +2,12 @@ import json
 import os
 import re
 import datetime
+import subprocess
+import threading
+import tempfile
+import zipfile
+from pathlib import Path
+from urllib import request as urllib_request
 
 CONFIG_PATH = os.path.expanduser("~/.km2studio/config.json")
 
@@ -47,6 +53,9 @@ def ai_build_filename(product_type: str, colors: list[str], brand_keywords: list
 
 DEFAULT_INPUT_DIR = config.get("default_input_folder", os.path.expanduser("~"))
 DEFAULT_OUTPUT_DIR = config.get("default_output_folder", os.path.expanduser("~"))
+
+APP_ROOT = Path(__file__).resolve().parent
+REMOTE_ARCHIVE_URL = "https://github.com/kalemeyer/km2-image-studio/archive/refs/heads/main.zip"
 
 print("Loaded KM2 Config:", config)
 
@@ -105,6 +114,15 @@ BASIC_PALETTE = {
     "pink": (255,105,180), "magenta": (255,0,255),
     "burgundy": (128,0,32), "charcoal": (54,69,79)
 }
+
+SOCIAL_PRESETS = [
+    ("Instagram Post", 1080, 1080, 0),
+    ("Instagram Story", 1080, 1920, 0),
+    ("Facebook Post", 1200, 630, 0),
+    ("LinkedIn Post", 1200, 627, 0),
+    ("Pinterest Pin", 1000, 1500, 0),
+    ("YouTube Thumbnail", 1280, 720, 0),
+]
 
 def _rgb_dist(a, b):
     return sum((a[i]-b[i])**2 for i in range(3))
@@ -275,6 +293,7 @@ class AppBase:
         self.root.title("KM2 Image Studio — Vera (v3)")
         self.root.geometry("880x700")
         self.root.minsize(820, 640)
+        self._updating = False
 
         self._init_vars()
         self._style()
@@ -335,7 +354,7 @@ class AppBase:
 
         left = ttk.LabelFrame(container, text="Settings")
         left.grid(row=2, column=0, sticky="nsew", padx=(0,8))
-        for i in range(13):
+        for i in range(14):
             left.rowconfigure(i, weight=0)
         left.columnconfigure(1, weight=1)
 
@@ -353,14 +372,23 @@ class AppBase:
         ttk.Entry(size_frame, width=8, textvariable=self.target_h).pack(side="left")
         size_frame.grid(row=3, column=1, sticky="w", padx=6, pady=4)
 
-        ttk.Label(left, text="Margin (px)").grid(row=4, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(left, width=8, textvariable=self.margin).grid(row=4, column=1, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Social presets").grid(row=4, column=0, sticky="nw", padx=6, pady=(0,4))
+        preset_frame = ttk.Frame(left)
+        for idx, (label, _, _, _) in enumerate(SOCIAL_PRESETS):
+            btn = ttk.Button(preset_frame, text=label, command=lambda n=label: self._apply_preset(n))
+            btn.grid(row=idx//2, column=idx%2, sticky="ew", padx=2, pady=2)
+        for col in range(2):
+            preset_frame.columnconfigure(col, weight=1)
+        preset_frame.grid(row=4, column=1, sticky="ew", padx=6, pady=(0,4))
 
-        ttk.Label(left, text="Logo (PNG, optional)").grid(row=5, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Margin (px)").grid(row=5, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(left, width=8, textvariable=self.margin).grid(row=5, column=1, sticky="w", padx=6, pady=4)
+
+        ttk.Label(left, text="Logo (PNG, optional)").grid(row=6, column=0, sticky="w", padx=6, pady=4)
         logo_row = ttk.Frame(left)
         ttk.Entry(logo_row, textvariable=self.logo_path).pack(side="left", fill="x", expand=True)
         ttk.Button(logo_row, text="Browse", command=self._pick_logo).pack(side="left", padx=4)
-        logo_row.grid(row=5, column=1, sticky="ew", padx=6, pady=4)
+        logo_row.grid(row=6, column=1, sticky="ew", padx=6, pady=4)
 
         wm_row = ttk.Frame(left)
         ttk.Checkbutton(wm_row, text="Add soft logo projection", variable=self.add_wm).pack(side="left")
@@ -368,7 +396,7 @@ class AppBase:
         ttk.Spinbox(wm_row, width=5, from_=0.0, to=0.6, increment=0.01, textvariable=self.wm_opacity).pack(side="left")
         ttk.Label(wm_row, text="Scale").pack(side="left", padx=(10,2))
         ttk.Spinbox(wm_row, width=5, from_=0.1, to=0.9, increment=0.05, textvariable=self.wm_scale).pack(side="left")
-        wm_row.grid(row=6, column=1, sticky="w", padx=6, pady=4)
+        wm_row.grid(row=7, column=1, sticky="w", padx=6, pady=4)
 
         opt_row = ttk.Frame(left)
         # Export & processing options
@@ -379,30 +407,32 @@ class AppBase:
         ttk.Checkbutton(opt_row, text="Export PNG", variable=self.export_png).pack(side="left", padx=10)
         ttk.Checkbutton(opt_row, text="Remove background", variable=self.use_rembg).pack(side="left", padx=10)
         ttk.Checkbutton(opt_row, text="Add product shadow", variable=self.add_shadow).pack(side="left", padx=10)
+        opt_row.grid(row=8, column=0, columnspan=2, sticky="w", padx=6, pady=4)
 
 
-        ttk.Label(left, text="Output folder").grid(row=8, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Output folder").grid(row=9, column=0, sticky="w", padx=6, pady=4)
         out_row = ttk.Frame(left)
         self.output_entry = ttk.Entry(out_row, textvariable=self.output_folder)
         self.output_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(out_row, text="Browse", command=self._pick_output).pack(side="left", padx=4)
-        out_row.grid(row=8, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", foreground="#666").grid(row=9, column=1, sticky="w", padx=6, pady=(0,8))
+        out_row.grid(row=9, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(left, text="Processed JPG/PNG and the CSV manifest go here.", foreground="#666").grid(row=10, column=1, sticky="w", padx=6, pady=(0,8))
 
-        ttk.Label(left, text="Finished (originals) folder").grid(row=10, column=0, sticky="w", padx=6, pady=4)
+        ttk.Label(left, text="Finished (originals) folder").grid(row=11, column=0, sticky="w", padx=6, pady=4)
         fin_row = ttk.Frame(left)
         self.finished_entry = ttk.Entry(fin_row, textvariable=self.finished_folder)
         self.finished_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(fin_row, text="Browse", command=self._pick_finished).pack(side="left", padx=4)
-        fin_row.grid(row=10, column=1, sticky="ew", padx=6, pady=4)
-        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", foreground="#666").grid(row=11, column=1, sticky="w", padx=6, pady=(0,8))
+        fin_row.grid(row=11, column=1, sticky="ew", padx=6, pady=4)
+        ttk.Label(left, text="After success, ORIGINAL files are moved here (keeps your raw folder clean).", foreground="#666").grid(row=12, column=1, sticky="w", padx=6, pady=(0,8))
 
         act = ttk.Frame(left)
         ttk.Button(act, text="Process Queue", command=self._process_queue).pack(side="left", padx=4)
         ttk.Button(act, text="Clear Queue", command=self._clear_queue).pack(side="left", padx=4)
         ttk.Button(act, text="Add Files…", command=self._add_files).pack(side="left", padx=4)
+        ttk.Button(act, text="Update App", command=self._update_app).pack(side="left", padx=4)
         ttk.Button(act, text="Help", command=self._help).pack(side="left", padx=4)
-        act.grid(row=12, column=0, columnspan=2, sticky="w", padx=6, pady=8)
+        act.grid(row=13, column=0, columnspan=2, sticky="w", padx=6, pady=8)
 
         right = ttk.LabelFrame(container, text="Drop Zone & Progress")
         right.grid(row=2, column=1, sticky="nsew")
@@ -427,9 +457,24 @@ class AppBase:
         self.log.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0,8))
 
     def _log(self, s: str):
-        self.log.insert("end", s + "\n")
-        self.log.see("end")
-        self.root.update_idletasks()
+        def _append():
+            self.log.insert("end", s + "\n")
+            self.log.see("end")
+            self.root.update_idletasks()
+
+        if threading.current_thread() is threading.main_thread():
+            _append()
+        else:
+            self.root.after(0, _append)
+
+    def _apply_preset(self, name: str):
+        for label, w, h, margin in SOCIAL_PRESETS:
+            if label == name:
+                self.target_w.set(str(w))
+                self.target_h.set(str(h))
+                self.margin.set(str(margin))
+                self._log(f"Applied preset: {label} → {w}×{h}px (margin {margin}px)")
+                break
 
     def _pick_logo(self):
         f = filedialog.askopenfilename(filetypes=[("Image files","*.png;*.jpg;*.jpeg")])
@@ -449,7 +494,8 @@ class AppBase:
                "2) Drag images into the drop zone (or use Add Files…).\n"
                "3) Choose your Output folder.\n"
                "4) (Optional) Choose a Finished folder — originals will be MOVED there after success.\n"
-               "5) Click Process Queue.\n\n"
+               "5) Click Process Queue.\n"
+               "6) Use Update App whenever you want to pull the newest features right from GitHub.\n\n"
                f"Background removal: {'ON by default' if self.use_rembg.get() else 'OFF by default'}"
                + ("" if _HAVE_REMBG else "\nNOTE: rembg not detected. Install: pip install rembg"))
         messagebox.showinfo("Help", msg)
@@ -457,6 +503,88 @@ class AppBase:
     def _add_files(self):
         files = filedialog.askopenfilenames(filetypes=[("Images","*.png;*.jpg;*.jpeg;*.webp")])
         self._add_paths(files)
+
+    def _update_app(self):
+        if self._updating:
+            messagebox.showinfo("Update", "An update is already in progress — please wait.")
+            return
+
+        if not messagebox.askyesno(
+            "Update KM2 Image Studio",
+            "This will download the newest files from GitHub. Continue?",
+        ):
+            return
+
+        self._updating = True
+        self._log("Starting update…")
+        threading.Thread(target=self._run_update, daemon=True).start()
+
+    def _run_update(self):
+        try:
+            if (APP_ROOT / ".git").exists() and shutil.which("git"):
+                self._log("Detected git checkout — running git pull…")
+                result = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=str(APP_ROOT),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                output = (result.stdout or "").strip() or (result.stderr or "").strip()
+                if result.returncode != 0:
+                    raise RuntimeError(output or "git pull failed")
+                if output:
+                    self._log(output)
+            else:
+                self._log("No git metadata found — downloading ZIP archive…")
+                self._apply_archive_update()
+
+            self._log("Update complete. Restart the app to load the newest version.")
+            self.root.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "Update complete",
+                    "Restart KM2 Image Studio to load the newest version.",
+                ),
+            )
+        except Exception as exc:
+            message = str(exc)
+            self._log(f"Update failed: {message}")
+            self.root.after(0, lambda: messagebox.showerror("Update failed", message))
+        finally:
+            self._updating = False
+
+    def _apply_archive_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive_path = Path(tmp) / "update.zip"
+            self._log("Downloading latest ZIP from GitHub…")
+            with urllib_request.urlopen(REMOTE_ARCHIVE_URL) as response, archive_path.open("wb") as fh:
+                shutil.copyfileobj(response, fh)
+
+            self._log("Unpacking update…")
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(tmp)
+
+            extracted_dirs = list(Path(tmp).glob("km2-image-studio-*"))
+            if not extracted_dirs:
+                raise RuntimeError("Could not find extracted update contents")
+
+            source_root = extracted_dirs[0]
+            for item in source_root.iterdir():
+                if item.name in {".git", "__pycache__"}:
+                    continue
+                dest = APP_ROOT / item.name
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                if item.is_dir():
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+
+        self._log("Latest files copied into place.")
 
     def _on_drop(self, event):
         raw = event.data
